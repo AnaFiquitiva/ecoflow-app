@@ -8,6 +8,12 @@
 
 begin;
 
+-- Parte de una base vacía aunque se haya cargado seed.sql. El rollback del
+-- final deshace también este borrado, así que los datos de demo sobreviven.
+delete from public.proyectos;
+delete from public.materiales;
+delete from auth.users where email like '%@ecoflow.test';
+
 -- Datos de prueba: un coordinador, dos instaladores, dos proyectos.
 insert into auth.users (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'coord@ecoflow.test'),
@@ -57,6 +63,35 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
+-- I1b (0003): un instalador crea un proyecto y puede leerlo de vuelta
+-- (INSERT ... RETURNING, lo mismo que hace el formulario), pero Luis no lo ve.
+-- ---------------------------------------------------------------------------
+do $$
+declare v_codigo text; n integer;
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+  set local role authenticated;
+  insert into public.proyectos (codigo, cliente, direccion, capacidad_kwp, creado_por)
+  values ('EF-0100', 'Cliente Ana', 'Calle 9 #10-11', 5.00,
+          '22222222-2222-2222-2222-222222222222')
+  returning codigo into v_codigo;
+  if v_codigo is distinct from 'EF-0100' then
+    raise exception 'I1b falla: el creador no puede leer su proyecto';
+  end if;
+  reset role;
+
+  perform set_config('request.jwt.claims',
+    '{"sub":"33333333-3333-3333-3333-333333333333","role":"authenticated"}', true);
+  set local role authenticated;
+  select count(*) into n from public.proyectos where codigo = 'EF-0100';
+  if n <> 0 then
+    raise exception 'I1b falla: Luis ve un proyecto ajeno';
+  end if;
+  reset role;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- I2: un instalador no puede asignarse a otro proyecto.
 -- ---------------------------------------------------------------------------
 do $$
@@ -88,6 +123,25 @@ begin
     where id = 'aaaaaaaa-0000-0000-0000-000000000001';
     reset role;
     raise exception 'I3 falla: se pudo escribir el stock';
+  exception when insufficient_privilege then
+    reset role;
+  end;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- I3b (0004): un instalador asignado no puede cambiar quién creó el proyecto.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  perform set_config('request.jwt.claims',
+    '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+  set local role authenticated;
+  begin
+    update public.proyectos
+    set creado_por = '22222222-2222-2222-2222-222222222222'
+    where id = 'bbbbbbbb-0000-0000-0000-000000000001';
+    reset role;
+    raise exception 'I3b falla: se pudo cambiar creado_por';
   exception when insufficient_privilege then
     reset role;
   end;

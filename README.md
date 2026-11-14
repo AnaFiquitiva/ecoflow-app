@@ -15,14 +15,27 @@ cp .env.example .env.local        # añade tu URL y tu anon key
 npm run dev
 ```
 
-Base de datos (requiere la CLI de Supabase):
+Base de datos local (requiere Docker; la CLI de Supabase viene en las
+devDependencies):
 
 ```bash
-supabase start
-supabase db reset                                   # aplica las migraciones
-psql "$DATABASE_URL" -f supabase/tests/invariantes.sql   # prueba los invariantes
-npm run types:db                                    # regenera src/types/db.ts
+npx supabase start                # levanta Postgres, Auth, API y Studio
+npx supabase db reset             # aplica las migraciones y supabase/seed.sql
+docker exec -i supabase_db_ecoflow-app psql -U postgres -v ON_ERROR_STOP=1 \
+  < supabase/tests/invariantes.sql   # prueba los invariantes
+npm run types:db:local            # regenera src/types/database.ts
 ```
+
+`npx supabase status` muestra la URL de la API y la anon key para
+`.env.local`. Studio queda en http://127.0.0.1:54323.
+
+Usuarios de demo que crea `seed.sql` (contraseña `ecoflow123`, solo local):
+
+| Usuario | Rol | Ve |
+|---|---|---|
+| `coord@ecoflow.test` | coordinador | los 4 proyectos |
+| `ana@ecoflow.test` | instaladora | EF-0001 y EF-0003 |
+| `luis@ecoflow.test` | instalador | EF-0002 y EF-0004 |
 
 | Comando | Qué hace |
 |---|---|
@@ -42,7 +55,7 @@ revisa cada respuesta suya.
 
 | | Invariante | Dónde se garantiza |
 |---|---|---|
-| **I1** | Un instalador solo lee los proyectos en los que está asignado | `0002_rls.sql`, política *leo mis proyectos* |
+| **I1** | Un instalador solo lee los proyectos en los que está asignado o que él mismo creó | `0003_creador_ve_su_proyecto.sql`, política *leo mis proyectos* |
 | **I2** | Solo el coordinador asigna instaladores a un proyecto | `0002_rls.sql`, política *solo el coordinador asigna* |
 | **I3** | El stock de materiales no lo escribe ningún cliente | `0002_rls.sql`, `revoke update (stock)` |
 | **I4** | Un proyecto completado tiene `fecha_fin`; el cierre nunca precede al inicio | `0001_schema.sql`, constraints `completado_tiene_cierre` y `fechas_coherentes` |
@@ -160,10 +173,26 @@ permite al planificador reutilizar el resultado dentro de la consulta.
 - **El rol vive en `app_metadata`, no en `user_metadata`.** Lo segundo lo
   escribe el propio usuario con `supabase.auth.updateUser()`, lo que dejaría
   I2 en papel mojado. `app_metadata` solo se escribe desde el servidor.
-- **`REVOKE` a nivel de columna.** RLS filtra **filas, no columnas**: no puede
-  expresar "esta columna es de solo lectura". Eso es lo que cumple I3, y es
-  también el motivo de que `codigo` y `creado_por` no aparezcan en el tipo
-  `Update` de `src/types/db.ts`.
+- **Privilegios por columna como lista blanca (`0004`).** RLS filtra **filas,
+  no columnas**: no puede expresar "esta columna es de solo lectura". La
+  primera versión (`0002`) hacía `REVOKE update (stock)`, y la prueba I3 la
+  desmintió: Supabase concede `UPDATE` sobre la tabla entera a
+  `authenticated`, y en PostgreSQL quitar el permiso de una columna no anula
+  el de la tabla. `0004` quita el `UPDATE` de tabla y concede solo las
+  columnas editables. Sin eso, un instalador asignado podía cambiar
+  `creado_por` (lo cubre la prueba I3b).
+
+### El creador también lee su proyecto (`0003`)
+
+El formulario hace `insert(...).select()`, es decir `INSERT ... RETURNING`, y
+PostgreSQL exige que la fila devuelta cumpla **también la política de
+SELECT**. Quien acaba de crear un proyecto todavía no está en
+`proyecto_instaladores`, así que un instalador normal recibía el error 42501
+y no podía crear nada; solo funcionaba para el coordinador. La política de
+lectura admite ahora `creado_por = auth.uid()`. La escritura no se amplía, y
+`creado_por` no se puede falsificar porque la política de `INSERT` exige que
+coincida con `auth.uid()` y la columna tiene el `UPDATE` revocado. Lo prueba
+el bloque *I1b* de `invariantes.sql`.
 
 ### La vista `disponibilidad`
 
@@ -180,7 +209,9 @@ revela ningún proyecto, cliente ni asignación.
 
 ```
 src/
-├── types/db.ts          generado por `npm run types:db` — NO se edita a mano
+├── types/
+│   ├── database.ts      generado por `npm run types:db` — NO se edita a mano
+│   └── db.ts            alias de dominio derivados de database.ts
 ├── lib/
 │   ├── supabase.ts      cliente único a nivel de módulo
 │   ├── schemas.ts       validación zod, espejo de los CHECK del esquema
@@ -218,9 +249,20 @@ Los tipos no los escribe la IA: los genera el esquema con
 `supabase gen types`. Es la pieza que mantiene una sola fuente de verdad —
 si una columna cambia, la compilación rompe en lugar de fallar en producción.
 
+Lo demostró al generarlos por primera vez: PostgreSQL no propaga `NOT NULL`
+a las columnas de una vista, así que `disponibilidad.disponible` es
+`number | null`. Unos tipos escritos a mano lo habían declarado `number` y el
+compilador no avisaba; con los generados, `MaterialesPage` dejó de compilar
+hasta tratar el nulo. Como el generador tampoco ve los privilegios por
+columna, `db.ts` excluye de `ProyectoUpdate` las columnas que `0004` deja
+inmutables.
+
 ---
 
 ## 5. Uso de IA
+
+El texto completo del prompt maestro y de los prompts clave está en
+[`docs/prompt-maestro.md`](docs/prompt-maestro.md).
 
 El **prompt maestro** es la especificación, no una petición: contexto, las
 cinco entidades con sus invariantes I1–I5, las reglas de negocio, las
@@ -266,8 +308,12 @@ criterio de aceptación y el caso que la desmiente los pongo yo.
 
 `npm run typecheck` limpio en `strict`, con `noUnusedLocals`,
 `noUnusedParameters` y `noUncheckedIndexedAccess`. 13 pruebas de los esquemas
-de validación y las utilidades. Los cinco invariantes se prueban en SQL como
-coordinador y como dos instaladores distintos.
+de validación y las utilidades. `invariantes.sql` tiene 8 bloques (I1, I1b,
+I2, I3, I3b, I4, I5 y la regresión del fan-out) que se ejecutan como
+coordinador y como dos instaladores distintos, y pasan contra una base
+recién migrada. Esas pruebas encontraron dos fallos que el código no
+mostraba: el creador no podía leer su proyecto (`0003`) y los `REVOKE` por
+columna no tenían efecto (`0004`).
 
 Bundle de producción medido con `npm run build`:
 
@@ -275,8 +321,8 @@ Bundle de producción medido con `npm run build`:
 |---|---|---|
 | `supabase` | 225,4 kB | 59,2 kB |
 | `react-vendor` | 163,2 kB | 53,3 kB |
-| `index` (app) | 125,6 kB | 38,1 kB |
-| `index.css` | 13,8 kB | 3,7 kB |
+| `index` (app) | 126,8 kB | 38,5 kB |
+| `index.css` | 14,0 kB | 3,7 kB |
 | `MaterialesPage` (diferido) | 1,9 kB | 0,8 kB |
 
 `supabase-js` y `react-vendor` van en chunks propios: no reduce el peso total,

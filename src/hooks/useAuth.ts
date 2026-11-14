@@ -7,6 +7,8 @@ export interface UseAuthResult {
   /** Viene de app_metadata del JWT, que solo se escribe en el servidor. */
   esCoordinador: boolean;
   loading: boolean;
+  /** Devuelve el mensaje de error, o null si la sesión se abrió. */
+  entrar: (email: string, password: string) => Promise<string | null>;
   salir: () => Promise<void>;
 }
 
@@ -40,6 +42,10 @@ export function useAuth(): UseAuthResult {
     session,
     esCoordinador: rol === 'coordinador',
     loading,
+    entrar: async (email, password) => {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      return error ? error.message : null;
+    },
     salir: async () => {
       await supabase.auth.signOut();
     },

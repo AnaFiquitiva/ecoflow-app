@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { LoginForm } from '@/components/LoginForm';
 import { ListaSkeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
@@ -11,7 +12,7 @@ import ProyectosPage from '@/pages/ProyectosPage';
 const MaterialesPage = lazy(() => import('@/pages/MaterialesPage'));
 
 export default function App() {
-  const { session, esCoordinador, loading, salir } = useAuth();
+  const { session, esCoordinador, loading, entrar, salir } = useAuth();
 
   return (
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
@@ -42,12 +43,22 @@ export default function App() {
       </header>
 
       <main>
-        <Suspense fallback={<ListaSkeleton filas={4} />}>
-          <Routes>
-            <Route path="/" element={<ProyectosPage />} />
-            <Route path="/materiales" element={<MaterialesPage />} />
-          </Routes>
-        </Suspense>
+        {loading ? (
+          <ListaSkeleton filas={4} />
+        ) : !session ? (
+          // Sin sesión RLS no devuelve filas: se pide login en lugar de
+          // mostrar un tablero vacío que parezca un error.
+          <LoginForm onEntrar={entrar} />
+        ) : (
+          // key: al cambiar de usuario se remonta todo y no quedan datos
+          // del anterior en memoria.
+          <Suspense key={session.user.id} fallback={<ListaSkeleton filas={4} />}>
+            <Routes>
+              <Route path="/" element={<ProyectosPage />} />
+              <Route path="/materiales" element={<MaterialesPage />} />
+            </Routes>
+          </Suspense>
+        )}
       </main>
     </div>
   );

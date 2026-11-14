@@ -25,23 +25,28 @@ export default function MaterialesPage() {
             </tr>
           </thead>
           <tbody>
-            {materiales.map((m) => (
-              <tr key={m.id} className="border-b border-neutral-100 last:border-0">
-                <td className="py-2 font-mono text-xs">{m.sku}</td>
-                <td className="py-2">{m.nombre}</td>
-                <td className="py-2 text-right">{m.stock}</td>
-                <td className="py-2 text-right text-neutral-500">{m.reservado}</td>
-                <td
-                  className={
-                    m.disponible <= 0
-                      ? 'py-2 text-right font-semibold text-red-600'
-                      : 'py-2 text-right font-semibold'
-                  }
-                >
-                  {m.disponible}
-                </td>
-              </tr>
-            ))}
+            {materiales.map((m) => {
+              // PostgreSQL no propaga NOT NULL a las columnas de una vista,
+              // así que el tipo generado las declara anulables.
+              const disponible = m.disponible ?? 0;
+              return (
+                <tr key={m.id} className="border-b border-neutral-100 last:border-0">
+                  <td className="py-2 font-mono text-xs">{m.sku}</td>
+                  <td className="py-2">{m.nombre}</td>
+                  <td className="py-2 text-right">{m.stock ?? 0}</td>
+                  <td className="py-2 text-right text-neutral-500">{m.reservado ?? 0}</td>
+                  <td
+                    className={
+                      disponible <= 0
+                        ? 'py-2 text-right font-semibold text-red-600'
+                        : 'py-2 text-right font-semibold'
+                    }
+                  >
+                    {disponible}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </CardContent>
