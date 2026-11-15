@@ -89,6 +89,17 @@ begin
     raise exception 'I1b falla: Luis ve un proyecto ajeno';
   end if;
   reset role;
+
+  -- 0005: Ana, como creadora, puede cambiar el estado de su proyecto.
+  perform set_config('request.jwt.claims',
+    '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+  set local role authenticated;
+  update public.proyectos set estado = 'en_progreso' where codigo = 'EF-0100';
+  get diagnostics n = row_count;
+  reset role;
+  if n <> 1 then
+    raise exception 'I1b falla: la creadora no puede editar su proyecto';
+  end if;
 end $$;
 
 -- ---------------------------------------------------------------------------

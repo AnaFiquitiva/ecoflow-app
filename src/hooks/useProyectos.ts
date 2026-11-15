@@ -123,7 +123,15 @@ export function useProyectos(estado?: EstadoProyecto): UseProyectosResult {
 
       if (e || !data) {
         setProyectos(previos); // rollback al estado exacto anterior
-        setError(new Error(e?.message ?? 'No se pudo cambiar el estado'));
+        // PGRST116: el UPDATE no afectó a ninguna fila. Con RLS eso significa
+        // que la política no permite editar este proyecto, no un fallo de red.
+        setError(
+          new Error(
+            e?.code === 'PGRST116'
+              ? 'No tienes permiso para modificar este proyecto'
+              : (e?.message ?? 'No se pudo cambiar el estado')
+          )
+        );
         return false;
       }
       const fresco = data as Proyecto;

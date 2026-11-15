@@ -55,7 +55,7 @@ revisa cada respuesta suya.
 
 | | Invariante | Dónde se garantiza |
 |---|---|---|
-| **I1** | Un instalador solo lee los proyectos en los que está asignado o que él mismo creó | `0003_creador_ve_su_proyecto.sql`, política *leo mis proyectos* |
+| **I1** | Un instalador solo lee y edita los proyectos en los que está asignado o que él mismo creó | `0003` y `0005`, políticas *leo mis proyectos* y *edito mis proyectos* |
 | **I2** | Solo el coordinador asigna instaladores a un proyecto | `0002_rls.sql`, política *solo el coordinador asigna* |
 | **I3** | El stock de materiales no lo escribe ningún cliente | `0002_rls.sql`, `revoke update (stock)` |
 | **I4** | Un proyecto completado tiene `fecha_fin`; el cierre nunca precede al inicio | `0001_schema.sql`, constraints `completado_tiene_cierre` y `fechas_coherentes` |
@@ -193,6 +193,14 @@ lectura admite ahora `creado_por = auth.uid()`. La escritura no se amplía, y
 `creado_por` no se puede falsificar porque la política de `INSERT` exige que
 coincida con `auth.uid()` y la columna tiene el `UPDATE` revocado. Lo prueba
 el bloque *I1b* de `invariantes.sql`.
+
+Al grabar la demo apareció la otra mitad del problema: el creador ya leía su
+proyecto, pero no podía cambiarle el estado, porque la política de `UPDATE`
+seguía exigiendo asignación. El `UPDATE` afectaba a 0 filas y supabase-js
+devolvía `PGRST116`. `0005` aplica la misma regla a la edición; los
+privilegios de columna de `0004` siguen impidiendo tocar `codigo` o
+`creado_por`. El hook traduce ahora `PGRST116` a "No tienes permiso para
+modificar este proyecto" en lugar de mostrar el error técnico.
 
 ### La vista `disponibilidad`
 
